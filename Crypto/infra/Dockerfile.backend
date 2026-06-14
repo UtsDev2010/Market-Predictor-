@@ -1,0 +1,44 @@
+# =============================================================================
+# Market Predictor — Backend production image
+# =============================================================================
+FROM python:3.11-slim AS base
+
+# --- System dependencies ---
+# build-essential + libpq-dev: required to build/run psycopg2 & asyncpg
+# curl: used by the container HEALTHCHECK
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# --- Python dependencies (layer-cached) ---
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --upgrade pip \
+    && pip install -r /app/backend/requirements.txt
+
+# --- Application code ---
+COPY backend/ /app/backend/
+COPY run.py /app/run.py
+
+# --- Non-root runtime user ---
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/models \
+    && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+# run.py initialises the DB schema, starts the scheduler, and launches uvicorn.
+CMD ["python", "run.py"]

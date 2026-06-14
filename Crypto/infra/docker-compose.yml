@@ -1,0 +1,59 @@
+# =============================================================================
+# Market Predictor — local orchestration stack
+#
+# Usage (from repo root):
+#   docker compose -f infra/docker-compose.yml --env-file .env.docker up --build
+#
+# Spins up:
+#   - timescaledb : TimescaleDB (PostgreSQL 15) with a persistent volume
+#   - backend     : the FastAPI + scheduler app, built from infra/Dockerfile.backend
+# =============================================================================
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.15.0-pg15
+    container_name: mp_timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-market_predictor}
+      POSTGRES_USER: ${DB_USER:-mp_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mp_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mp_user} -d ${DB_NAME:-market_predictor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mp_net
+
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backend
+    container_name: mp_backend
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    env_file:
+      - ../.env.docker
+    environment:
+      # Override the DB host so the app reaches the compose service, not localhost.
+      DB_HOST: timescaledb
+    ports:
+      - "8000:8000"
+    volumes:
+      - model_artifacts:/app/models
+    networks:
+      - mp_net
+
+volumes:
+  timescale_data:
+  model_artifacts:
+
+networks:
+  mp_net:
+    driver: bridge
